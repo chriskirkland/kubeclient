@@ -1,5 +1,7 @@
 require 'json'
+require 'http'
 require 'rest-client'
+require 'circuitbox'
 
 module Kubeclient
   # Common methods
@@ -29,8 +31,11 @@ module Kubeclient
 
     DEFAULT_TIMEOUTS = {
       # These do NOT affect watch, watching never times out.
-      open: Net::HTTP.new('127.0.0.1').open_timeout, # depends on ruby version
-      read: Net::HTTP.new('127.0.0.1').read_timeout
+      #open: Net::HTTP.new('127.0.0.1').open_timeout, # depends on ruby version
+      #read: Net::HTTP.new('127.0.0.1').read_timeout
+      # TODO(cmkirkla): make these configurable
+      open: 15,
+      read: 15
     }.freeze
 
     DEFAULT_HTTP_PROXY_URI = nil
@@ -82,6 +87,7 @@ module Kubeclient
         validate_bearer_token_file
         bearer_token(File.read(@auth_options[:bearer_token_file]))
       end
+
     end
 
     def method_missing(method_sym, *args, &block)
@@ -216,7 +222,7 @@ module Kubeclient
         open_timeout: @timeouts[:open],
         read_timeout: @timeouts[:read]
       }
-      RestClient::Resource.new(@api_endpoint.merge(path).to_s, options)
+      Kubeclient::Common::RestResource.new(@api_endpoint.merge(path).to_s, options)
     end
 
     def rest_client
@@ -532,6 +538,76 @@ module Kubeclient
       end
 
       options.merge(@socket_options)
+    end
+  end
+
+  module Common
+    # RestClient::Resource wrapped with a global circuit breaker
+    class RestResource < RestClient::Resource
+      # global configuration
+      #Circuitbox.configure do |config|
+      #  #TODO(cmkirkla): change this to :File
+      #  config.default_circuit_store = Moneta.new(:Memory, expires: true)
+      #  config.default_timer = SimpleTimer
+      #end
+
+      def initialize(uri, options={}, backwards_compatibility=nil, &block)
+        super
+
+        @circuit = Circuitbox.circuit(:kubernetes, {
+          # exceptions circuitbox tracks for counting failures (required)
+          exceptions:       [RestClient::Exception],
+  
+          # seconds the circuit stays open once it has passed the error threshold
+          sleep_window:     180,
+  
+          # length of interval (in seconds) over which it calculates the error rate
+          time_window:      60,
+  
+          # number of requests within `time_window` seconds before it calculates error rates
+          volume_threshold: 0,
+  
+          # the store you want to use to save the circuit state so it can be
+          # tracked, this needs to be Moneta compatible, and support increment
+          # this overrides what is set in the global configuration
+          cache: Moneta.new(:Memory),
+          #cache: Moneta.new(:File, dir: 'moneta'),
+  
+          # exceeding this rate will open the circuit
+          error_threshold:  2,
+  
+          # Logger to use
+          # This overrides what is set in the global configuration
+          logger: Logger.new(STDOUT),
+  
+          # Customized Timer object
+          # Use NullTimer if you don't want to time circuit execution
+          # Use MonotonicTimer to avoid bad time metrics on system time resync
+          # This overrides what is set in the global configuration
+          #execution_timer = SimpleTimer,
+  
+          # Customized notifier
+          # overrides the default
+          # this overrides what is set in the global configuration
+         # notifier: Notifier.new 
+        })
+
+        class << self
+          Kubeclient::ClientMixin::ENTITY_METHODS.each do |method|
+            if method == "watch"
+              # watch is handled separately
+              next
+            end
+
+            # wrap resource methods with circuit breaker
+            define_method(method) {
+              @circuit.run {
+                super()
+              }
+            }
+          end
+        end
+      end
     end
   end
 end
