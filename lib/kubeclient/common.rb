@@ -600,11 +600,11 @@ module Kubeclient
             end
 
             # wrap resource methods with circuit breaker
-            define_method(method) {
+            define_method(method) do |headers={}, &block|
               @circuit.run {
-                super()
+                super(headers,&block)
               }
-            }
+            end
           end
         end
       end
