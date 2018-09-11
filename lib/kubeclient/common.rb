@@ -1,5 +1,8 @@
 require 'json'
+require 'http'
 require 'rest-client'
+require 'circuitbox'
+require 'activesupport'
 
 module Kubeclient
   # Common methods
@@ -28,9 +31,9 @@ module Kubeclient
     }.freeze
 
     DEFAULT_TIMEOUTS = {
-      # These do NOT affect watch, watching never times out.
-      open: Net::HTTP.new('127.0.0.1').open_timeout, # depends on ruby version
-      read: Net::HTTP.new('127.0.0.1').read_timeout
+      # TODO(cmkirkla): move this hardcoded configuration to fluentd-plugin-kubernetes_metadata_filter
+      open: 15, # seconds
+      read: 15  # seconds
     }.freeze
 
     DEFAULT_HTTP_PROXY_URI = nil
@@ -82,6 +85,7 @@ module Kubeclient
         validate_bearer_token_file
         bearer_token(File.read(@auth_options[:bearer_token_file]))
       end
+
     end
 
     def method_missing(method_sym, *args, &block)
@@ -216,7 +220,7 @@ module Kubeclient
         open_timeout: @timeouts[:open],
         read_timeout: @timeouts[:read]
       }
-      RestClient::Resource.new(@api_endpoint.merge(path).to_s, options)
+      Kubeclient::Common::RestResource.new(@api_endpoint.merge(path).to_s, options)
     end
 
     def rest_client
@@ -532,6 +536,66 @@ module Kubeclient
       end
 
       options.merge(@socket_options)
+    end
+  end
+
+  #TODO(chriskirkland): add circuit breaker enabled implementation for RestClient::Request.execute()
+  module Common
+    # RestClient::Resource wrapped with a global circuit breaker
+    class RestResource < RestClient::Resource
+      def initialize(uri, options={}, backwards_compatibility=nil, &block)
+        super
+
+        @logger = Logger.new(STDOUT)
+        @circuit = Circuitbox.circuit(:apiserver, {
+          # exceptions circuitbox tracks for counting failures (required)
+          exceptions:       [RestClient::Exception],
+          # seconds the circuit stays open once it has passed the error threshold
+          sleep_window:     180,
+          # length of interval (in seconds) over which it calculates the error rate
+          time_window:      120,
+          # exceeding this rate (percentage) will open the circuit
+          error_threshold:  50,
+          # number of requests within `time_window` seconds before it calculates error rates
+          volume_threshold: 4,
+          # user file-based cache to support multi-processing and restart persistence
+          cache: Moneta.new(:File, dir: '/mnt/ibm-kube-fluentd-persist/circuitbreaker'),
+        })
+
+        # setup notifications
+        ActiveSupport::Notifications.subscribe('circuit_open') do |name, start, finish, id, payload|
+          circuit_name = payload[:circuit]
+          @logger.warn("circuit for #{circuit_name} opened")
+        end
+        ActiveSupport::Notifications.subscribe('circuit_close') do |name, start, finish, id, payload|
+          circuit_name = payload[:circuit]
+          @logger.warn("circuit for #{circuit_name} closed")
+        end
+      end
+
+      def delete(additional_headers={}, &block)
+        @circuit.run { super }
+      end
+
+      def get(additional_headers={}, &block)
+        @circuit.run { super }
+      end
+
+      def head(additional_headers={}, &block)
+        @circuit.run { super }
+      end
+
+      def patch(payload, additional_headers={}, &block)
+        @circuit.run { super }
+      end
+
+      def post(payload, additional_headers={}, &block)
+        @circuit.run { super }
+      end
+
+      def put(payload, additional_headers={}, &block)
+        @circuit.run { super }
+      end
     end
   end
 end
