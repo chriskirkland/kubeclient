@@ -548,7 +548,7 @@ module Kubeclient
 
         @logger = Logger.new(STDOUT)
         # turn off circuitbox debug logs
-        @logger.level = Logger::WARN
+        @logger.level = Logger::DEBUG
 
         @circuit = Circuitbox.circuit(:apiserver, {
           logger: @logger,
