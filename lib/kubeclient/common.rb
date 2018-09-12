@@ -548,7 +548,7 @@ module Kubeclient
 
         @logger = Logger.new(STDOUT)
         # turn off circuitbox debug logs
-        @logger.level = Logger::DEBUG
+        @logger.level = Logger::WARN
 
         @circuit = Circuitbox.circuit(:apiserver, {
           logger: @logger,
@@ -562,8 +562,8 @@ module Kubeclient
           error_threshold:  50,
           # number of requests within `time_window` seconds before it calculates error rates
           volume_threshold: 4,
-          # user file-based cache to support multi-processing; don't persist across container restarts
-          cache: Moneta.new(:File, dir: '/tmp/circuitbreaker', expires: true),
+          # file-based cache to support multi-processing; persist across restarts
+          cache: Moneta.new(:File, dir: '/mnt/ibm-kube-fluentd-persist/circuitbreaker', expires: true),
         })
 
         # setup notifications
