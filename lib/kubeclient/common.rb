@@ -547,7 +547,11 @@ module Kubeclient
         super
 
         @logger = Logger.new(STDOUT)
+        # turn off circuitbox debug logs
+        @logger.level = Logger::WARN
+
         @circuit = Circuitbox.circuit(:apiserver, {
+          logger: @logger,
           # exceptions circuitbox tracks for counting failures (required)
           exceptions:       [RestClient::Exception],
           # seconds the circuit stays open once it has passed the error threshold
