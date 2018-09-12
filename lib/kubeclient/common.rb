@@ -2,7 +2,7 @@ require 'json'
 require 'http'
 require 'rest-client'
 require 'circuitbox'
-require 'activesupport'
+require 'active_support'
 
 module Kubeclient
   # Common methods
