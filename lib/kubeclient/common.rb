@@ -562,8 +562,8 @@ module Kubeclient
           error_threshold:  50,
           # number of requests within `time_window` seconds before it calculates error rates
           volume_threshold: 4,
-          # user file-based cache to support multi-processing and restart persistence
-          cache: Moneta.new(:File, dir: '/mnt/ibm-kube-fluentd-persist/circuitbreaker'),
+          # user file-based cache to support multi-processing; don't persist across container restarts
+          cache: Moneta.new(:File, dir: '/tmp/circuitbreaker'),
         })
 
         # setup notifications
